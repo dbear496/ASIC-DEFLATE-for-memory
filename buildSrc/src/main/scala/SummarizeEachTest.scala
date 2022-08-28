@@ -57,8 +57,14 @@ abstract class SummarizeEachTest extends DefaultTask {
                   "compression ratio" |
                   "C-cycles" |
                   "C-throughput (B/c)" |
+                  "C-latency (total)" |
+                  "C-latency (cycles)" |
                   "D-cycles" |
-                  "D-throughput (B/c)"
+                  "D-throughput (B/c)" |
+                  "D-latency (total)" |
+                  "D-latency (cycles)" |
+                  "D-latency half-page (total)" |
+                  "D-latency half-page (cycles)"
                   => Some((d(0), d(1)))
                 case _ => {
                   wbad
@@ -92,9 +98,11 @@ abstract class SummarizeEachTest extends DefaultTask {
           failedPages = l("failed (pages)").map(_.toInt).getOrElse(0),
           compressedSize = l("compressed (bits)").map(_.toLong).getOrElse(0),
           compressorCycles = l("C-cycles").map(_.toLong).getOrElse(0),
-          compressorStalls = 0,
+          compressorLatency = l("C-latency (total)").map(_.toLong).getOrElse(0),
           decompressorCycles = l("D-cycles").map(_.toLong).getOrElse(0),
-          decompressorStalls = 0
+          decompressorLatency = l("D-latency (total)").map(_.toLong).getOrElse(0),
+          decompressorHalfPage =
+            l("D-latency half-page (total)").map(_.toLong).getOrElse(0)
         )}
       }
       .flatten
@@ -119,9 +127,10 @@ private case class Summary(
   passedPages: Int,
   failedPages: Int,
   compressorCycles: Long,
-  compressorStalls: Long,
+  compressorLatency: Long,
   decompressorCycles: Long,
-  decompressorStalls: Long
+  decompressorLatency: Long,
+  decompressorHalfPage: Long
 ) {
   def +(that: Summary): Summary = Summary(
     dumps = this.dumps ++ that.dumps,
@@ -133,9 +142,11 @@ private case class Summary(
     passedPages = this.passedPages + that.passedPages,
     failedPages = this.failedPages + that.failedPages,
     compressorCycles = this.compressorCycles + that.compressorCycles,
-    compressorStalls = this.compressorStalls + that.compressorStalls,
+    compressorLatency = this.compressorLatency + that.compressorLatency,
     decompressorCycles = this.decompressorCycles + that.decompressorCycles,
-    decompressorStalls = this.decompressorStalls + that.decompressorStalls
+    decompressorLatency = this.decompressorLatency + that.decompressorLatency,
+    decompressorHalfPage = this.decompressorHalfPage +
+      that.decompressorHalfPage
   )
   
   def print(sink: PrintWriter): Unit = {
@@ -155,11 +166,20 @@ private case class Summary(
     sink.println(s"C-cycles: ${this.compressorCycles}")
     sink.println(s"C-throughput (B/c): " +
       s"${this.nonzeroSize.doubleValue / this.compressorCycles}")
+    sink.println(s"C-latency (total): ${this.compressorLatency}")
+    sink.println(s"C-latency (cycles): " +
+      s"${this.compressorLatency.doubleValue / this.nonzeroPages}")
     sink.println(s"D-cycles: ${this.decompressorCycles}")
     sink.println(s"D-throughput (B/c): " +
       s"${this.nonzeroSize.doubleValue / this.decompressorCycles}")
+    sink.println(s"D-latency (total): ${this.decompressorLatency}")
+    sink.println(s"D-latency (cycles): " +
+      s"${this.decompressorLatency.doubleValue / this.nonzeroPages}")
+    sink.println(s"D-latency half-page (total): ${this.decompressorHalfPage}")
+    sink.println(s"D-latency half-page (cycles): " +
+      s"${this.decompressorHalfPage.doubleValue / this.nonzeroPages}")
   }
 }
 private object Summary {
-  object empty extends Summary(Set.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+  object empty extends Summary(Set.empty, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 }

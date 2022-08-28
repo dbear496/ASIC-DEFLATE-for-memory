@@ -17,9 +17,10 @@ object Summarize extends App {
     passedPages: Int,
     failedPages: Int,
     compressorCycles: Long,
-    compressorStalls: Long,
+    compressorLatency: Long,
     decompressorCycles: Long,
-    decompressorStalls: Long
+    decompressorLatency: Long,
+    decompressorHalfPage: Long
   ) {
     def +(that: Summary): Summary = Summary(
       dumps = this.dumps + " " + that.dumps,
@@ -31,9 +32,11 @@ object Summarize extends App {
       passedPages = this.passedPages + that.passedPages,
       failedPages = this.failedPages + that.failedPages,
       compressorCycles = this.compressorCycles + that.compressorCycles,
-      compressorStalls = this.compressorStalls + that.compressorStalls,
+      compressorLatency = this.compressorLatency + that.compressorLatency,
       decompressorCycles = this.decompressorCycles + that.decompressorCycles,
-      decompressorStalls = this.decompressorStalls + that.decompressorStalls
+      decompressorLatency = this.decompressorLatency + that.decompressorLatency,
+      decompressorHalfPage = this.decompressorHalfPage +
+        that.decompressorHalfPage
     )
   }
   object EmptySummary extends Summary("", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -61,8 +64,14 @@ object Summarize extends App {
           "compression ratio" |
           "C-cycles" |
           "C-throughput (B/c)" |
+          "C-latency (total)" |
+          "C-latency (cycles)" |
           "D-cycles" |
-          "D-throughput (B/c)"
+          "D-throughput (B/c)" |
+          "D-latency (total)" |
+          "D-latency (cycles)" |
+          "D-latency half-page (total)" |
+          "D-latency half-page (cycles)"
           => Some((d(0), d(1)))
         case _ => {
           wbad
@@ -87,9 +96,13 @@ object Summarize extends App {
     passedPages = l("failed (pages)").map(_.toInt).getOrElse(0),
     failedPages = l("compressed (bits)").map(_.toInt).getOrElse(0),
     compressorCycles = l("C-cycles").map(_.toLong).getOrElse(0),
-    compressorStalls = 0,
+    compressorLatency = l("C-latency (total)").map(_.toLong).getOrElse(0),
     decompressorCycles = l("D-cycles").map(_.toLong).getOrElse(0),
-    decompressorStalls = 0
+    decompressorLatency = l("D-latency (total)").map(_.toLong).getOrElse(0),
+    decompressorHalfPage =
+      l("D-latency half-page (total)").map(_.toLong).getOrElse(0)
+    decompressorHalfPage =
+      l("D-latency half-page (cycles)").map(_.toLong).getOrElse(0)
   )}
   .reduce(_ + _)
   
@@ -108,7 +121,16 @@ object Summarize extends App {
   out.println(s"C-cycles: ${s.compressorCycles}")
   out.println(s"C-throughput (B/c): " +
     s"${s.nonzeroSize.doubleValue / s.compressorCycles}")
+  out.println(s"C-latency (total): ${s.compressorLatency}")
+  out.println(s"C-latency (cycles): " +
+    s"${s.compressorLatency.doubleValue / s.nonzeroPages}")
   out.println(s"D-cycles: ${s.decompressorCycles}")
   out.println(s"D-throughput (B/c): " +
     s"${s.nonzeroSize.doubleValue / s.decompressorCycles}")
+  out.println(s"D-latency (total): ${s.decompressorLatency}")
+  out.println(s"D-latency (cycles): " +
+    s"${s.decompressorLatency.doubleValue / s.nonzeroPages}")
+  out.println(s"D-latency half-page (total): ${s.decompressorHalfPage}")
+  out.println(s"D-latency half-page (cycles): " +
+    s"${s.decompressorHalfPage.doubleValue / s.nonzeroPages}")
 }

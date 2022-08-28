@@ -90,9 +90,10 @@ struct Job {
   size_t decompressedCap;
   
   int compressorCycles;
+  int compressorStalls;
   int decompressorCycles;
-  int compressorStallCycles;
-  int decompressorStallCycles;
+  int decompressorStalls;
+  int decompressorHalfPage;
 };
 struct Summary {
   size_t totalSize;
@@ -104,10 +105,11 @@ struct Summary {
   int passedPages;
   int failedPages;
   
-  int compressorCycles;
-  int compressorStalls;
-  int decompressorCycles;
-  int decompressorStalls;
+  long compressorCycles;
+  long compressorStalls;
+  long decompressorCycles;
+  long decompressorStalls;
+  long decompressorHalfPage;
 };
 struct Options {
   const char *dump;
@@ -272,9 +274,10 @@ int main(int argc, const char **argv, char **env) {
     jobs[i].decompressedLen = 0;
     jobs[i].decompressedCap = 0;
     jobs[i].compressorCycles = 0;
+    jobs[i].compressorStalls = 0;
     jobs[i].decompressorCycles = 0;
-    jobs[i].compressorStallCycles = 0;
-    jobs[i].decompressorStallCycles = 0;
+    jobs[i].decompressorStalls = 0;
+    jobs[i].decompressorHalfPage = 0;
   }
   
   summary.totalSize = 0;
@@ -284,9 +287,10 @@ int main(int argc, const char **argv, char **env) {
   summary.passedPages = 0;
   summary.failedPages = 0;
   summary.compressorCycles = 0;
-  summary.compressorStalls = 0;
+  summary.compressorLatency = 0;
   summary.decompressorCycles = 0;
-  summary.decompressorStalls = 0;
+  summary.decompressorLatency = 0;
+  summary.decompressorHalfPage = 0;
   
   // assert reset on rising edge to initialize module state
   compressor->reset = 1;
@@ -326,8 +330,14 @@ int main(int argc, const char **argv, char **env) {
   fprintf(reportfile, "compression ratio: %f\n", (double)summary.nonzeroSize / summary.compressedSize * 8);
   fprintf(reportfile, "C-cycles: %d\n", summary.compressorCycles);
   fprintf(reportfile, "C-throughput (B/c): %f\n", (double)summary.nonzeroSize / summary.compressorCycles);
+  fprintf(reportfile, "C-latency (total): %lu\n", summary.compressorLatency);
+  fprintf(reportfile, "C-latency (cycles): %f\n", (double)summary.compressorLatency / summary.nonzeroPages);
   fprintf(reportfile, "D-cycles: %d\n", summary.decompressorCycles);
   fprintf(reportfile, "D-throughput (B/c): %f\n", (double)summary.nonzeroSize / summary.decompressorCycles);
+  fprintf(reportfile, "D-latency (total): %lu\n", summary.decompressorLatency);
+  fprintf(reportfile, "D-latency (cycles): %f\n", (double)summary.decompressorLatency / summary.nonzeroPages);
+  fprintf(reportfile, "D-latency half-page (total): %lu\n", summary.decompressorHalfPage);
+  fprintf(reportfile, "D-latency half-page (cycles): %f\n", (double)summary.decompressorHalfPage / summary.nonzeroPages);
   
   cleanup();
   
@@ -459,6 +469,12 @@ static bool doCompressor() {
     }
     summary.compressorCycles += 1;
     
+    if(compressor->finished_S1 && !compressor->transferNext_S1) {
+      if(jobIn != jobOut) {
+        jobIn->compressorStalls++;
+      }
+    }
+    
     if(compressor->io_in_restart) {
       jobIdxIn = ++jobIdxIn % JOB_QUEUE_SIZE;
       inBufIdx = 0;
@@ -473,7 +489,7 @@ static bool doCompressor() {
     }
     
     
-    // make ure everything is still up to date
+    // make sure everything is still up to date
     compressor->eval();
     COMPRESSOR_TRACE();
     
@@ -570,6 +586,17 @@ static bool doDecompressor() {
     }
     summary.decompressorCycles += 1;
     
+    if(decompressor->finished_S1 && !decompressor->transferNext_S1) {
+      if(jobIn != jobOut) { // always false because no page-level pipeline
+        jobIn->decompressorStalls++;
+      }
+    }
+    
+    if(jobOut->decompressedLen < jobOut->rawLen / 2) {
+      jobOut->decompressorHalfPage =
+        jobOut->decompressorCycles - jobIn->decompressorStalls + 1
+    }
+    
     if(decompressor->io_in_restart) {
       jobIdxIn = ++jobIdxIn % JOB_QUEUE_SIZE;
       inBufIdx = 0;
@@ -623,6 +650,12 @@ static bool doFinalize() {
   
   summary.compressedSize += job->compressedLen;
   
+  summary.compressorLatency +=
+    job->compressorCycles - job->compressorStalls;
+  summary.decompressorLatency +=
+    job->decompressorCycles - job->decompressorStalls;
+  summary.decompressorHalfPage += job->decompressorHalfPage
+  
   static bool printHeader = true;
   if(printHeader) {
     printHeader = false;
@@ -632,7 +665,10 @@ static bool doFinalize() {
     fprintf(reportfile, "raw size,");
     fprintf(reportfile, "compressed size,");
     fprintf(reportfile, "cycles in compressor,");
+    fprintf(reportfile, "compress latency,");
     fprintf(reportfile, "cycles in decompressor,");
+    fprintf(reportfile, "decompress latency,");
+    fprintf(reportfile, "decompress half-page,")
     fprintf(reportfile, "\n");
   }
   
@@ -642,7 +678,10 @@ static bool doFinalize() {
   fprintf(reportfile, "%lu,", job->rawLen);
   fprintf(reportfile, "%lu,", job->compressedLen);
   fprintf(reportfile, "%d,", job->compressorCycles);
+  fprintf(reportfile, "%d,", job->compressorCycles - job->compressorStalls);
   fprintf(reportfile, "%d,", job->decompressorCycles);
+  fprintf(reportfile, "%d,", job->decompressorCycles - job->decompressorStalls);
+  fprintf(reportfile, "%d,", job->decompressorHalfPage);
   fprintf(reportfile, "\n");
   
   if(job->id == debugJobId) {
@@ -677,9 +716,10 @@ static bool doFinalize() {
   job->compressedLen = 0;
   job->decompressedLen = 0;
   job->compressorCycles = 0;
+  job->compressorStalls = 0;
   job->decompressorCycles = 0;
-  job->compressorStallCycles = 0;
-  job->decompressorStallCycles = 0;
+  job->decompressorStalls = 0;
+  job->decompressorHalfPage = 0;
   
   jobIdx = ++jobIdx % JOB_QUEUE_SIZE;
   
