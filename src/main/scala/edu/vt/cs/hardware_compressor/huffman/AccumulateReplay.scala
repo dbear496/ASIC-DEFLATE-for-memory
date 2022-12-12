@@ -27,13 +27,13 @@ class AccumulateReplay(params: Parameters) extends Module {
   
   // load from memory
   val unconsumed = Mux(io.out.ready < outbufLen, outbufLen - io.out.ready, 0.U)
+  val memread = WireDefault(Vec(params.encoderParallelism, UInt(params.characterBits.W)), DontCare)
+  val outbuf_tmp = Wire(Vec(params.encoderParallelism * 2, UInt(params.characterBits.W)))
   for(i <- 0 until params.encoderParallelism) {
-    val j = (i.U - head)(params.encoderParallelism.idxBits - 1,0)
-    val m = mem(((head + (params.encoderParallelism - 1).U - i.U) & (params.accRepBufferSize - params.encoderParallelism).U) + i.U)
-    val b = outbuf((j +& unconsumed) % params.encoderParallelism.U)
-    val s = outbuf((j +& outbufLen) % params.encoderParallelism.U)
-    val o = j +& outbufLen < params.encoderParallelism.U +& io.out.ready
-    b := Mux(o, m, s)
+    memread((i.U - head)(params.encoderParallelism.idxBits - 1,0)) := mem(((head + (params.encoderParallelism - 1).U - i.U) & (params.accRepBufferSize - params.encoderParallelism).U) + i.U)
+    outbuf_tmp(i) := Mux(i.U < outbufLen, outbuf(i), memread(i.U - outbufLen))
+    outbuf_tmp(i + params.encoderParallelism) := memread((i + params.encoderParallelism).U - outbufLen)
+    outbuf(i) := VecInit(outbuf_tmp.drop(i).take(params.encoderParallelism))(io.out.ready min outbufLen)
   }
   head := head + ((cap - head)(params.accRepBufferSize.idxBits - 1,0) min (params.encoderParallelism.U - unconsumed))
   
